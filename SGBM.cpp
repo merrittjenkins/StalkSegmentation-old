@@ -218,7 +218,7 @@ int main(int argc, char** argv)
 
         keypoints_1[good_matches[i].queryIdx].pt.x = (int) keypoints_1[good_matches[i].queryIdx].pt.x;
         keypoints_1[good_matches[i].queryIdx].pt.y = (int) keypoints_1[good_matches[i].queryIdx].pt.y;
-        cout << keypoints_1[good_matches[i].queryIdx].pt << endl;
+        //cout << keypoints_1[good_matches[i].queryIdx].pt << endl;
     }
 
 
