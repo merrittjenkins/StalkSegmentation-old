@@ -100,8 +100,10 @@ int main(int argc, char** argv)
     std::string disparity_filename = "disparity.jpg";
 
     const char* point_cloud_filename = 0;
+    const char* point_cloud_filename_proj = 0;
 
     point_cloud_filename = "cloud.ply";
+    point_cloud_filename_proj = "proj.ply";
 
     enum { STEREO_BM=0, STEREO_SGBM=1, STEREO_HH=2, STEREO_VAR=3, STEREO_3WAY=4 };
     int alg = STEREO_SGBM;
@@ -131,7 +133,7 @@ int main(int argc, char** argv)
     double duration;
     start = clock();
 
-    int minHessian = 800;
+    int minHessian = 200;
     SurfFeatureDetector detector(minHessian);
 
     std::vector<KeyPoint> keypoints_1, keypoints_2;
@@ -187,7 +189,7 @@ int main(int argc, char** argv)
     std::vector< DMatch > good_matches;
 
     for( int i = 0; i < descriptors_1.rows; i++ )
-    { if( matches[i].distance <= max(2*min_dist, 0.5) )  //this used to be 0.02
+    { if( matches[i].distance <= max(2*min_dist, 0.02) )  //this used to be 0.02
         { good_matches.push_back( matches[i]); }
     }
 
@@ -211,19 +213,20 @@ int main(int argc, char** argv)
 
     cout << "U,V COORDS OF FIRST MATCHED KEYPOINT: " << keypoints_1[good_matches[0].queryIdx].pt << endl;//good_matches[1].distance << endl;
 
-    Mat matchedKeypoints[2][good_matches.size()];
+    for( int i = 0; i < (int)good_matches.size(); i++ )
+    {
 
-    //for( int i = 0; i < (int)good_matches.size(); i++ )
-    //{
-    //    cout << keypoints_1[good_matches[i].queryIdx].pt << endl;
-    //}
+        keypoints_1[good_matches[i].queryIdx].pt.x = (int) keypoints_1[good_matches[i].queryIdx].pt.x;
+        keypoints_1[good_matches[i].queryIdx].pt.y = (int) keypoints_1[good_matches[i].queryIdx].pt.y;
+        cout << keypoints_1[good_matches[i].queryIdx].pt << endl;
+    }
 
 
     waitKey(0);
 
-    //-----------------------------------------------PROJECT OUT TO 3D-----------------------------------------------
-    
 
+    //-----------------------------------------------CREAT DISPARITY IMAGE-----------------------------------------------
+    
     int SADWindowSize;
     bool no_display;
     float scale;
@@ -276,7 +279,7 @@ int main(int argc, char** argv)
         disp.convertTo(disp8, CV_8U, 255/(numberOfDisparities*16.));
     else
         disp.convertTo(disp8, CV_8U);
-
+        //cout << "Disparity: " << disp8.at<uchar>(1000,1000) << endl;
 
         namedWindow("disparity", 0);
         imshow("disparity", disp8);
@@ -289,20 +292,14 @@ int main(int argc, char** argv)
         printf("writing the disparity file...");
         imwrite(disparity_filename, disp8);
 
-    //Mat mask = disp8 > 79;
-    //cout << mask.rows << endl;
-    //cout << mask.cols << endl;
-    //imshow( "MASK", mask);
-    //cout << mask << endl;
-    //Mat outcolors = img1(mask);
+
+    //------------------------------------------PROJECT ALL PIXELS TO 3D-----------------------------------------
 
     Mat M1, D1, M2, D2;
     M1 = (Mat_<double>(3,3) << 2421.988247695817, 0.0, 1689.668741757609, 0.0, 2424.953969600827, 1372.029058638022, 0.0, 0.0, 1.0);
     M2 = (Mat_<double>(3,3) << 2402.822932836092, 0.0, 1715.977908625392, 0.0, 2405.531742202912, 1356.326619144245, 0.0, 0.0, 1.0);
     D1 = (Mat_<double>(5,1) << -0.001013934596658032, 0.00355911874186913, -0.0006557984914098192, -0.0009806454600919795, 0.0);
     D2 = (Mat_<double>(5,1) << -0.00596545966775133, 0.0056628943340289, -0.0008602296090100512, 6.54885403584621e-05, 0.0);
-
-    //[2000,0,0; 0, 2000,0; 0, 0, 1] >> M1;
 
     Mat R, T, R1, P1_rec, R2, P2_rec;
     Mat Q;
@@ -314,22 +311,65 @@ int main(int argc, char** argv)
 
     cout << Q << endl;  
 
-    //if(point_cloud_filename)
-    //{
-        printf("storing the point cloud...");
-        fflush(stdout);
-        Mat xyz;
-        reprojectImageTo3D(disp, xyz, Q, true);
-        //cvtColor(img1, COLOR_BGR2RGB)
+    printf("storing the point cloud...");
+    fflush(stdout);
+    Mat xyz;
+    reprojectImageTo3D(disp, xyz, Q, true);
+    //cvtColor(img1, COLOR_BGR2RGB)
 
-        saveXYZ(point_cloud_filename, xyz, img1);
-        printf("\n");
-    //}
-
-//-------------------------------------------------PROJECT 3D POINTS TO IMAGE 6----------------------------------------------
+    saveXYZ(point_cloud_filename, xyz, img1);
+    printf("\n");
 
 
+//-------------------------------------------------FIND THE 2D FEATURE POINTS IN 3D----------------------------------------------
 
+    const double max_z = 1.0e4;
+    FILE* fp = fopen(point_cloud_filename_proj, "wt");
+    std::ostringstream stream;
+
+    vector<Point3f> list_points3d;
+    vector<Point2f> list_points2d;
+
+    for( int i = 0; i < (int)good_matches.size(); i++ )
+    {
+
+        int u_loc = keypoints_1[good_matches[i].queryIdx].pt.x;
+        int v_loc = keypoints_1[good_matches[i].queryIdx].pt.y;
+        //cout << "U: " << u_loc << ", V: " << v_loc << ", Disparity: " << (int)disp8.at<uchar>(v_loc,u_loc) << endl;
+        Vec3f point = xyz.at<Vec3f>(v_loc, u_loc);
+        //cout << "X: " << point[0] << ", Y: " << point[1] << ", Z: " << point[2] << endl;
+        if (point[2]<10000) {
+            fprintf(fp, "%f %f %f\n", point[0], point[1], point[2]);
+            list_points3d.push_back(Point3f(point[0],point[1],point[2]));
+            list_points2d.push_back(Point2f(keypoints_2[good_matches[i].queryIdx].pt.x, keypoints_2[good_matches[i].queryIdx].pt.y));
+        }
+    }
+    fclose(fp);
+
+
+//-------------------------------------------------SOLVE PNP----------------------------------------------
+
+    Mat distCoeffs = Mat::zeros(4, 1, CV_64FC1);
+    Mat rvec = Mat::zeros(3, 1, CV_64FC1);
+    Mat tvec = Mat::zeros(3, 1, CV_64FC1);
+    Mat R_matrix = Mat::zeros(3, 3, CV_64FC1);
+    Mat t_matrix = Mat::zeros(3, 1, CV_64FC1);
+
+    bool useExtrinsicGuess = false;
+    int flags = 0;
+
+    // Pose estimation
+    bool correspondence = cv::solvePnP( list_points3d, list_points2d, M1, distCoeffs, rvec, tvec,
+                                      useExtrinsicGuess, flags);
+
+    cout << "Rvec: " << rvec << endl;
+    cout << "tvec: " << tvec << endl;
+    // Transforms Rotation Vector to Matrix
+    Rodrigues(rvec,R_matrix);
+    t_matrix = tvec;
+
+    cout << "R_matrix: " << R_matrix << endl;
+    cout << "t_matrix: " << t_matrix << endl;
 
 
     return 0;
